@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 
@@ -40,6 +41,38 @@ func DefineWithRoundTripper(c *duktape.Context, rt http.RoundTripper) {
 	c.PushGoFunction(goFetchSync(rt))
 	c.PutPropString(-2, "goFetchSync")
 	c.Pop2()
+}
+
+func DefineWithHandler(c *duktape.Context, h http.Handler) {
+	DefineWithRoundTripper(c, roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, r)
+
+		return &http.Response{
+			Request:    r,
+			StatusCode: recorder.Code,
+			Status:     http.StatusText(recorder.Code),
+			Header:     recorder.HeaderMap,
+			Body:       ioutil.NopCloser(recorder.Body),
+		}, nil
+	}))
+
+	// 	b := bytes.NewBufferString(opts.Body)
+	// 	res := httptest.NewRecorder()
+	// 	req, err := http.NewRequest(opts.Method, url, b)
+
+	// 	if err != nil {
+	// 		result.Errors = []error{err}
+	// 		return result
+	// 	}
+
+	// 	req.Header = opts.Headers
+	// 	server.ServeHTTP(res, req)
+	// 	result.Status = res.Code
+	// 	result.Headers = res.Header()
+	// 	result.Body = res.Body.String()
+	// 	return result
+	// }
 }
 
 func goFetchSync(rt http.RoundTripper) func(*duktape.Context) int {
