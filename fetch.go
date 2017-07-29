@@ -1,3 +1,4 @@
+//go:generate go-bindata -debug -pkg fetch -o bindata.go ./dist
 package fetch
 
 import (

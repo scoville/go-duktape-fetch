@@ -213,7 +213,6 @@ func TestGoFetchJson(t *testing.T) {
 }
 
 func TestGlobals(t *testing.T) {
-
 	testCases := []struct {
 		js     string
 		typeOf string

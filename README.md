@@ -4,7 +4,7 @@ Fetch polyfill for [go-duktape](https://github.com/olebedev/go-duktape).
 
 ### Usage
 
-First of all install the package `go get gopkg.in/olebedev/go-duktape-fetch.v1`.
+First of all install the package `go get gopkg.in/olebedev/go-duktape-fetch.v3`.
 
 ```go
 package main
@@ -12,15 +12,15 @@ package main
 import (
   "fmt"
 
-  "gopkg.in/olebedev/go-duktape.v1"
-  "gopkg.in/olebedev/go-duktape-fetch.v1"
+  "gopkg.in/olebedev/go-duktape.v3"
+  "gopkg.in/olebedev/go-duktape-fetch.v3"
 )
 
 func main() {
   // create an ecmascript context
   ctx := duktape.New()
   // push fetch into the global scope
-  fetch.Define(ctx, nil)
+  fetch.Define(ctx)
   ch := make(chan string)
   ctx.PushGlobalGoFunction("cbk", func(c *duktape.Context) int {
     ch <- c.SafeToString(-1)
@@ -39,10 +39,5 @@ func main() {
   fmt.Println(<-ch)
 }
 ```
-This program will prodice `<!DOCTYPE html>` into stdout.
+This program will produce `<!DOCTYPE html>` into stdout.
 
-Also you can define fetch with some other good possibilities. In 
-particular you can specify local http instance with `http.Handler` 
-interface as a the second parameter. It will be used for all local
-requests which url starts with `/`(single slash). See [tests](https://github.com/olebedev/go-duktape-fetch/blob/master/fetch_test.go) 
-for more detail.
