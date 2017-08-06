@@ -88,10 +88,6 @@ func TestGoFetchSyncExternal(t *testing.T) {
 		t.Fatalf("Expected status text %s, got %s", expected, resp.StatusText)
 	}
 
-	if len(resp.Errors) > 0 {
-		t.Fatalf("Expected 0 errors, got %d", len(resp.Errors))
-	}
-
 	if expected := "Hello, client\n"; resp.Body != expected {
 		t.Fatalf("Expected body %s, got %s", expected, resp.Body)
 	}
@@ -171,6 +167,36 @@ func TestGoFetchPromise(t *testing.T) {
 	body := <-ch
 
 	if expected := "404 page not found\n"; body != expected {
+		t.Fatalf("Expected body %s, got %s", expected, body)
+	}
+}
+
+func TestGoFetchThrowsError(t *testing.T) {
+	ctx := duktape.New()
+	defer ctx.DestroyHeap()
+
+	Define(ctx)
+
+	ch := make(chan string)
+	ctx.PushGlobalGoFunction("cbk", func(co *duktape.Context) int {
+		ch <- co.SafeToString(-1)
+		return 0
+	})
+
+	js := `
+		fetch('http://sdfsdfjsdlkgjsldg.sdfgsdg')
+			.catch(function(err){
+				cbk(err.message);
+			});
+		`
+
+	if err := ctx.PevalString(js); err != nil {
+		t.Fatal(err)
+	}
+
+	body := <-ch
+
+	if expected := "Get http://sdfsdfjsdlkgjsldg.sdfgsdg: dial tcp: lookup sdfsdfjsdlkgjsldg.sdfgsdg: no such host"; body != expected {
 		t.Fatalf("Expected body %s, got %s", expected, body)
 	}
 }

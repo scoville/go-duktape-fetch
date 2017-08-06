@@ -73,15 +73,32 @@ func goFetchSync(rt http.RoundTripper) func(*duktape.Context) int {
 		}
 
 		err := json.Unmarshal([]byte(c.JsonEncode(1)), &opts)
-		must(err)
+		if err != nil {
+			c.Pop2()
+			c.PushErrorObject(1, "%v", err)
+			return 1
+		}
 
 		req, err := http.NewRequest(opts.Method, opts.URL, strings.NewReader(opts.Body))
-		must(err)
+		if err != nil {
+			c.Pop2()
+			c.PushErrorObject(2, "%v", err)
+			return 1
+		}
 
-		resp := doRequest(req, rt)
+		resp, err := doRequest(req, rt)
+		if err != nil {
+			c.Pop2()
+			c.PushErrorObject(3, "%v", err)
+			return 1
+		}
 
 		j, err := json.MarshalIndent(resp, "", "  ")
-		must(err)
+		if err != nil {
+			c.Pop2()
+			c.PushErrorObject(4, "%v", err)
+			return 1
+		}
 
 		c.Pop3()
 		c.PushString(string(j))
@@ -97,17 +114,16 @@ type response struct {
 	Body       string      `json:"body"`
 	Status     int         `json:"status"`
 	StatusText string      `json:"statusText,omitempty"`
-	Errors     []error     `json:"errors"`
 }
 
-func doRequest(req *http.Request, rt http.RoundTripper) response {
+func doRequest(req *http.Request, rt http.RoundTripper) (response, error) {
 	client := http.Client{
 		Transport: rt,
 	}
 
 	httpResp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		return response{}, err
 	}
 
 	resp := response{
@@ -116,18 +132,16 @@ func doRequest(req *http.Request, rt http.RoundTripper) response {
 		Headers:    httpResp.Header,
 		Status:     httpResp.StatusCode,
 		StatusText: httpResp.Status,
-		Errors:     []error{},
 	}
 
 	defer httpResp.Body.Close()
 	body, err := ioutil.ReadAll(httpResp.Body)
 	if err != nil {
-		resp.Errors = append(resp.Errors, err)
-		return resp
+		return resp, err
 	}
 
 	resp.Body = string(body)
-	return resp
+	return resp, nil
 }
 
 type roundTripperFunc func(r *http.Request) (*http.Response, error)
