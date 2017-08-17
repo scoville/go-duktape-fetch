@@ -1,18 +1,22 @@
-var path = require('path');
-var webpack = require('webpack');
-
 module.exports = {
-  entry: './index',
+  entry: [
+    './index'
+  ],
   output: {
-    path: path.join(__dirname, 'dist'),
-    filename: 'bundle.js',
-  },
-  resolve: {
-    extensions: ['', '.js']
+    path: __dirname + "/dist",
+    filename: "bundle.js"
   },
   module: {
-    loaders: [
-      {test: /\.json$/, loader: 'json'}
+    rules: [
+      {
+        test: /\.js$/,
+        exclude: /(node_modules)/
+      }
     ]
+  },
+  node: {
+    console: false,
+    process: false,
+    setImmediate: false,
   }
-};
+}

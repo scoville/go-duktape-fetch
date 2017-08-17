@@ -55,9 +55,13 @@ function Fetch(url, o) {
 
     // send a request
     var res = Fetch.goFetchSync(url, options);
-    res.url = url;
 
-    resolve(new Response(res));
+    if (res instanceof Error) {
+      reject(res);
+    } else {
+      res.url = url;
+      resolve(new Response(res));
+    }
   });
 };
 

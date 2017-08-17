@@ -1,1 +1,1 @@
-require('expose?fetch!./fetch');
+require('expose-loader?fetch!./fetch');

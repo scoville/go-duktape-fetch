@@ -2,146 +2,265 @@ package fetch
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
-	. "gopkg.in/check.v1"
-
-	"github.com/gin-gonic/gin"
-	"github.com/parnurzeal/gorequest"
-	"gopkg.in/olebedev/go-duktape.v1"
+	duktape "gopkg.in/olebedev/go-duktape.v3"
 )
 
-// Hook up gocheck into the "go test" runner.
-func Test(t *testing.T) { TestingT(t) }
+func TestStackAroundGoFetchSync(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "Hello, client")
+	}))
+	defer ts.Close()
 
-type FetchSuite struct {
-	ctx     *duktape.Context
-	goFetch func(*duktape.Context) int
-}
+	ctx := duktape.New()
+	goFetch := goFetchSync(http.DefaultTransport)
 
-func (s *FetchSuite) SetUpSuite(c *C) {
-	gin.SetMode(gin.ReleaseMode)
-}
+	Define(ctx)
+	defer ctx.DestroyHeap()
 
-func (s *FetchSuite) SetUpTest(c *C) {
-	s.goFetch = goFetchSync(nil)
-	s.ctx = duktape.New()
-	Define(s.ctx, nil)
-}
+	ctx.PushString(ts.URL)
+	ctx.PushObject() // options
+	ctx.PushObject() // headers => [ url options headers ]
+	ctx.PutPropString(-2, "headers")
 
-var _ = Suite(&FetchSuite{})
+	ctx.PushContextDump()
 
-func (s *FetchSuite) TestStackAroundGoFetchSync(c *C) {
-	s.ctx.PushString("http://ya.ru")
-	s.ctx.PushObject() // options
-	s.ctx.PushObject() // headers => [ url options headers ]
-	s.ctx.PutPropString(-2, "headers")
+	if ctx.SafeToString(-1) != "ctx: top=2, stack=[\""+ts.URL+"\",{headers:{}}]" {
+		t.Fatalf("Unexpected string")
+	}
 
-	s.ctx.PushContextDump()
-	c.Assert(s.ctx.SafeToString(-1), Equals, "ctx: top=2, stack=[\"http://ya.ru\",{headers:{}}]")
-	c.Assert(s.goFetch(s.ctx), Equals, 1)
+	if goFetch(ctx) != 1 {
+		t.Fatalf("Expected 1 from goFetch")
+	}
 
-	c.Assert(s.ctx.GetTop(), Equals, 1)
-
-	resp := response{}
-	c.Assert(json.Unmarshal([]byte(s.ctx.JsonEncode(-1)), &resp), IsNil)
-}
-
-func (s *FetchSuite) TestGoFetchSyncExternal(c *C) {
-
-	s.ctx.PushString("http://ya.ru")
-	s.ctx.PushObject()                 // options => [ url {} ]
-	s.ctx.PushObject()                 // headers => [ url {} {} ]
-	s.ctx.PutPropString(-2, "headers") // => [ url {headers: {}} ]
-
-	c.Assert(s.goFetch(s.ctx), Equals, 1)
+	if ctx.GetTop() != 1 {
+		t.Fatalf("Expected 1 from GetTop")
+	}
 
 	resp := response{}
-	c.Assert(json.Unmarshal([]byte(s.ctx.JsonEncode(-1)), &resp), IsNil)
-	c.Assert(resp.Method, Equals, gorequest.GET)
-	c.Assert(resp.Status, Equals, 200)
-	c.Assert(resp.StatusText, Equals, "200 Ok")
-	c.Assert(resp.Errors, HasLen, 0)
-	c.Assert(resp.Body[:15], Equals, "<!DOCTYPE html>")
-	c.Assert(resp.Headers.Get("Content-Type"), Equals, "text/html; charset=UTF-8")
+	if err := json.Unmarshal([]byte(ctx.JsonEncode(-1)), &resp); err != nil {
+		t.Fatal(err)
+	}
 }
 
-func (s *FetchSuite) TestGoFetchInternal404(c *C) {
-	Define(s.ctx, gin.Default())
-	c.Assert(s.ctx.PevalString(`
-		fetch.goFetchSync('/404', {});
-	`), IsNil)
-	s.ctx.JsonEncode(-1)
-	respString := s.ctx.SafeToString(-1)
+func TestGoFetchSyncExternal(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Content-Type", "text/html; charset=UTF-8")
+		fmt.Fprintln(w, "Hello, client")
+	}))
+	defer ts.Close()
+
+	ctx := duktape.New()
+	goFetch := goFetchSync(http.DefaultTransport)
+
+	Define(ctx)
+	defer ctx.DestroyHeap()
+
+	ctx.PushString(ts.URL)
+	ctx.PushObject()                 // options => [ url {} ]
+	ctx.PushObject()                 // headers => [ url {} {} ]
+	ctx.PutPropString(-2, "headers") // => [ url {headers: {}} ]
+
+	if result := goFetch(ctx); result != 1 {
+		t.Fatalf("Expected goFetch result to be 1, got %d", result)
+	}
+
+	resp := response{}
+
+	if err := json.Unmarshal([]byte(ctx.JsonEncode(-1)), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Method != http.MethodGet {
+		t.Fatalf("Expected method %s, got %s", http.MethodGet, resp.Method)
+	}
+
+	if resp.Status != http.StatusOK {
+		t.Fatalf("Expected status %d, got %d", http.StatusOK, resp.Status)
+	}
+
+	if expected := fmt.Sprintf("%d %s", http.StatusOK, http.StatusText(http.StatusOK)); resp.StatusText != expected {
+		t.Fatalf("Expected status text %s, got %s", expected, resp.StatusText)
+	}
+
+	if expected := "Hello, client\n"; resp.Body != expected {
+		t.Fatalf("Expected body %s, got %s", expected, resp.Body)
+	}
+
+	if expected := "text/html; charset=UTF-8"; resp.Headers.Get("Content-Type") != expected {
+		t.Fatalf("Expected Content-Type to be %s, got %s", expected, resp.Headers.Get("Content-Type"))
+	}
+}
+
+func TestGoFetchInternal404(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	ctx := duktape.New()
+	u, _ := url.Parse(ts.URL)
+
+	DefineWithBaseURL(ctx, u)
+	defer ctx.DestroyHeap()
+
+	if err := ctx.PevalString(`fetch.goFetchSync('/', {});`); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx.JsonEncode(-1)
+	respString := ctx.SafeToString(-1)
 	resp := response{}
 	json.Unmarshal([]byte(respString), &resp)
-	c.Assert(resp.Status, Equals, 404)
-	c.Assert(resp.Method, Equals, gorequest.GET)
-	c.Assert(resp.Body, Equals, "404 page not found")
+
+	if resp.Method != http.MethodGet {
+		t.Fatalf("Expected method %s, got %s", http.MethodGet, resp.Method)
+	}
+
+	if resp.Status != http.StatusNotFound {
+		t.Fatalf("Expected status %d, got %d", http.StatusNotFound, resp.Status)
+	}
+
+	if expected := fmt.Sprintf("%d %s", http.StatusNotFound, http.StatusText(http.StatusNotFound)); resp.StatusText != expected {
+		t.Fatalf("Expected status text %s, got %s", expected, resp.StatusText)
+	}
+
+	if expected := "404 page not found\n"; resp.Body != expected {
+		t.Fatalf("Expected body %s, got %s", expected, resp.Body)
+	}
 }
 
-func (s *FetchSuite) TestGoFetchPromise(c *C) {
-	Define(s.ctx, gin.Default())
+func TestGoFetchPromise(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	ctx := duktape.New()
+	u, _ := url.Parse(ts.URL)
+
+	DefineWithBaseURL(ctx, u)
+	defer ctx.DestroyHeap()
+
 	ch := make(chan string)
-	s.ctx.PushGlobalGoFunction("cbk", func(co *duktape.Context) int {
+	ctx.PushGlobalGoFunction("cbk", func(co *duktape.Context) int {
 		ch <- co.SafeToString(-1)
 		return 0
 	})
 
-	c.Assert(s.ctx.PevalString(`
+	js := `
 		fetch('/404')
 			.then(function(resp){
 				return resp.text();
 			}).then(cbk);
-	`), IsNil)
-	c.Assert(<-ch, Equals, "404 page not found")
+		`
+
+	if err := ctx.PevalString(js); err != nil {
+		t.Fatal(err)
+	}
+
+	body := <-ch
+
+	if expected := "404 page not found\n"; body != expected {
+		t.Fatalf("Expected body %s, got %s", expected, body)
+	}
 }
 
-func (s *FetchSuite) TestGoFetchJson(c *C) {
-	r := gin.Default()
+func TestGoFetchThrowsError(t *testing.T) {
+	ctx := duktape.New()
+	defer ctx.DestroyHeap()
 
-	r.GET("/", func(c *gin.Context) {
-		c.JSON(201, map[string]interface{}{
-			"hello": "world",
-		})
+	Define(ctx)
+
+	ch := make(chan string)
+	ctx.PushGlobalGoFunction("cbk", func(co *duktape.Context) int {
+		ch <- co.SafeToString(-1)
+		return 0
 	})
 
-	Define(s.ctx, r)
+	js := `
+		fetch('http://sdfsdfjsdlkgjsldg.sdfgsdg')
+			.catch(function(err){
+				cbk(err.message);
+			});
+		`
+
+	if err := ctx.PevalString(js); err != nil {
+		t.Fatal(err)
+	}
+
+	body := <-ch
+
+	if expected := "Get http://sdfsdfjsdlkgjsldg.sdfgsdg: dial tcp: lookup sdfsdfjsdlkgjsldg.sdfgsdg: no such host"; body != expected {
+		t.Fatalf("Expected body %s, got %s", expected, body)
+	}
+}
+
+func TestGoFetchJson(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"hello": "world",
+		})
+	}))
+	defer ts.Close()
+
+	ctx := duktape.New()
+	u, _ := url.Parse(ts.URL)
+
+	DefineWithBaseURL(ctx, u)
+	defer ctx.DestroyHeap()
 
 	ch := make(chan bool)
-	s.ctx.PushGlobalGoFunction("cbk", func(co *duktape.Context) int {
+	ctx.PushGlobalGoFunction("cbk", func(co *duktape.Context) int {
 		ch <- co.GetType(-1).IsObject()
 		return 0
 	})
 
-	c.Assert(s.ctx.PevalString(`
+	js := `
 		fetch('/')
 			.then(function(resp){
 				return resp.json();
 			}).then(cbk);
-	`), IsNil)
-	c.Assert(<-ch, Equals, true)
+	`
+
+	if err := ctx.PevalString(js); err != nil {
+		t.Fatal(err)
+	}
+
+	if isObject := <-ch; !isObject {
+		t.Fatal("Expected IsObject to be true")
+	}
 }
 
-func (s *FetchSuite) TestGlobals(c *C) {
+func TestGlobals(t *testing.T) {
+	testCases := []struct {
+		js     string
+		typeOf string
+	}{
+		{`typeof fetch;`, "function"},
+		{`typeof fetch.goFetchSync;`, "function"},
+		{`typeof fetch.Promise;`, "function"},
+	}
+	for idx, tc := range testCases {
+		t.Run(fmt.Sprintf("#%d", idx), func(t *testing.T) {
+			ctx := duktape.New()
+			Define(ctx)
+			defer ctx.Destroy()
 
-	// fetch
-	c.Assert(s.ctx.PevalString(`typeof fetch;`), IsNil)
-	c.Assert(s.ctx.SafeToString(-1), Equals, "function")
-	s.ctx.Pop()
+			if err := ctx.PevalString(`typeof fetch;`); err != nil {
+				t.Fatal(err)
+			}
 
-	// fetch.goFetchSync
-	c.Assert(s.ctx.PevalString(`typeof fetch.goFetchSync;`), IsNil)
-	c.Assert(s.ctx.SafeToString(-1), Equals, "function")
-	s.ctx.Pop()
-
-	// fetch.Promise
-	c.Assert(s.ctx.PevalString(`typeof fetch.Promise;`), IsNil)
-	c.Assert(s.ctx.SafeToString(-1), Equals, "function")
-	s.ctx.Pop()
-
-}
-
-func (s *FetchSuite) TearDownTest(c *C) {
-	s.ctx.DestroyHeap()
+			got := ctx.SafeToString(-1)
+			if got != tc.typeOf {
+				t.Fatalf("Expected typeOf of %s, got %s", tc.typeOf, got)
+			}
+		})
+	}
 }
